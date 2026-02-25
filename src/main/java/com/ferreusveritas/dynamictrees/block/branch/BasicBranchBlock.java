@@ -44,12 +44,21 @@ import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.shapes.CollisionContext;
 import net.minecraft.world.phys.shapes.Shapes;
 import net.minecraft.world.phys.shapes.VoxelShape;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
+import java.util.ArrayDeque;
+import java.util.Deque;
+import java.util.HashSet;
+import java.util.Set;
 
 @SuppressWarnings("deprecation")
 public class BasicBranchBlock extends BranchBlock implements SimpleWaterloggedBlock {
+
+    private static final int RAPID_ROT_LOG_THRESHOLD = 256;
+    private static final Logger LOGGER = LogManager.getLogger();
 
     protected static final IntegerProperty RADIUS = IntegerProperty.create("radius", 1, MAX_RADIUS);
     public static final BooleanProperty WATERLOGGED = BlockStateProperties.WATERLOGGED;
@@ -146,6 +155,10 @@ public class BasicBranchBlock extends BranchBlock implements SimpleWaterloggedBl
             return false;//Bail out if not in rapid mode and the postRot chance fails
         }
 
+        if (rapid) {
+            return this.checkForRotRapid(level, pos, species, fertility, rand);
+        }
+
         // Rooty dirt below the block counts as a branch in this instance
         // Rooty dirt below for saplings counts as 2 neighbors if the soil is not infertile
         int neigh = 0;// High Nybble is count of branches, Low Nybble is any reinforcing treepart(including branches)
@@ -172,6 +185,69 @@ public class BasicBranchBlock extends BranchBlock implements SimpleWaterloggedBl
         }
 
         return didRot;
+    }
+
+    private boolean checkForRotRapid(LevelAccessor level, BlockPos pos, Species species, int fertility, RandomSource rand) {
+        final Deque<BlockPos> toVisit = new ArrayDeque<>();
+        final Set<Long> visited = new HashSet<>();
+        final long startPos = pos.asLong();
+        boolean didRotAtStart = false;
+
+        toVisit.push(pos);
+        visited.add(startPos);
+
+        while (!toVisit.isEmpty()) {
+            final BlockPos currentPos = toVisit.pop();
+            final BlockState currentState = level.getBlockState(currentPos);
+            if (currentState.getBlock() != this) {
+                continue;
+            }
+
+            final int currentRadius = this.getRadius(currentState);
+
+            // Rooty dirt below the block counts as a branch in this instance.
+            int neigh = 0;
+            boolean reinforced = false;
+
+            for (Direction dir : Direction.values()) {
+                final BlockPos deltaPos = currentPos.relative(dir);
+                final BlockState deltaBlockState = level.getBlockState(deltaPos);
+                neigh += TreeHelper.getTreePart(deltaBlockState).branchSupport(deltaBlockState, level, this, deltaPos, dir, currentRadius);
+                if (getBranchSupport(neigh) >= 1 && getLeavesSupport(neigh) >= 2) {
+                    reinforced = true;
+                    break;
+                }
+            }
+
+            if (reinforced) {
+                continue;
+            }
+
+            final boolean didRot = species.rot(level, currentPos, neigh & 0x0F, currentRadius, fertility, rand, true, fertility > 0);
+            if (currentPos.asLong() == startPos) {
+                didRotAtStart = didRot;
+            }
+
+            if (!didRot) {
+                continue;
+            }
+
+            for (Direction dir : Direction.values()) {
+                final BlockPos neighPos = currentPos.relative(dir);
+                if (level.getBlockState(neighPos).getBlock() == this && visited.add(neighPos.asLong())) {
+                    toVisit.push(neighPos);
+                }
+            }
+        }
+
+        if (visited.size() >= RAPID_ROT_LOG_THRESHOLD && LOGGER.isDebugEnabled()) {
+            LOGGER.debug(
+                    "Rapid rot scan on {} at {} visited {} branch nodes; startRot={}.",
+                    species.getRegistryName(), pos, visited.size(), didRotAtStart
+            );
+        }
+
+        return didRotAtStart;
     }
 
     ///////////////////////////////////////////
