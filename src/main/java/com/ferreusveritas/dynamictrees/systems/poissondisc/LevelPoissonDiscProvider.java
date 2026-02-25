@@ -48,20 +48,18 @@ public class LevelPoissonDiscProvider implements PoissonDiscProvider {
     }
 
     @Override
-    public List<PoissonDisc> getPoissonDiscs(int chunkX, int chunkY, int chunkZ) {
-        synchronized (this) {
-            this.random.setXOR(new BlockPos(chunkX, chunkY, chunkZ));
-            final PoissonDiscChunkSet cSet = getChunkDiscSet(chunkX, chunkZ);
-            if (cSet.generated) {
-                return this.getChunkPoissonDiscs(chunkX, chunkZ);
-            } else {
-                int i = 0;
-                List<PoissonDisc> output = null;
-                while (this.radiusCoordinator.runPass(chunkX, chunkZ, i++)) {
-                    output = this.generatePoissonDiscs(random, chunkX, chunkZ);
-                }
-                return output;
+    public synchronized List<PoissonDisc> getPoissonDiscs(int chunkX, int chunkY, int chunkZ) {
+        this.random.setXOR(new BlockPos(chunkX, chunkY, chunkZ));
+        final PoissonDiscChunkSet cSet = getChunkDiscSet(chunkX, chunkZ);
+        if (cSet.generated) {
+            return this.getChunkPoissonDiscs(chunkX, chunkZ);
+        } else {
+            int i = 0;
+            List<PoissonDisc> output = null;
+            while (this.radiusCoordinator.runPass(chunkX, chunkZ, i++)) {
+                output = this.generatePoissonDiscs(random, chunkX, chunkZ);
             }
+            return output;
         }
     }
 
@@ -257,30 +255,21 @@ public class LevelPoissonDiscProvider implements PoissonDiscProvider {
 
     private PoissonDiscChunkSet getChunkDiscSet(int chunkX, int chunkZ) {
         final ChunkPos key = new ChunkPos(chunkX, chunkZ);
-        final PoissonDiscChunkSet cSet;
-
-        if (this.chunkDiscs.containsKey(key)) {
-            cSet = this.chunkDiscs.get(key);
-        } else {
-            cSet = new PoissonDiscChunkSet();
-            this.chunkDiscs.put(key, cSet);
-        }
-
-        return cSet;
+        return this.chunkDiscs.computeIfAbsent(key, ignored -> new PoissonDiscChunkSet());
     }
 
     @Override
-    public byte[] getChunkPoissonData(int chunkX, int chunkY, int chunkZ) {
+    public synchronized byte[] getChunkPoissonData(int chunkX, int chunkY, int chunkZ) {
         return this.getChunkDiscSet(chunkX, chunkZ).getDiscData();
     }
 
     @Override
-    public void setChunkPoissonData(int chunkX, int chunkY, int chunkZ, byte[] circleData) {
+    public synchronized void setChunkPoissonData(int chunkX, int chunkY, int chunkZ, byte[] circleData) {
         this.getChunkDiscSet(chunkX, chunkZ).setDiscData(circleData);
     }
 
     @Override
-    public void unloadChunkPoissonData(int chunkX, int chunkY, int chunkZ) {
+    public synchronized void unloadChunkPoissonData(int chunkX, int chunkY, int chunkZ) {
         this.chunkDiscs.remove(new ChunkPos(chunkX, chunkZ));
     }
 
